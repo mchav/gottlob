@@ -8,9 +8,13 @@ A build tool for the Frege programming language.
 ## Commands
 
 `new [project]` - makes a new project in the current directory
+
 `-help`         - displays a help menu
+
 `-v`            - displays the version
+
 `compile`       - compiles the project (files in the src directory)
+
 `run [class]`   - runs the given class. If none is given, attempts to run main.
 
 # Some design choices
