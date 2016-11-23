@@ -1,0 +1,142 @@
+module Gottlob where
+
+import frege.java.lang.Processes
+
+data GotCommand = Run RunCmd | Compile CompileCmd | New String | Usage | Version | Unrecognised String | Error String
+
+data RunCmd = RunCmd { directory :: String, classpath :: [String], runClass :: Maybe String}
+
+data CompileCmd = CompileCmd { directory :: String, classpath :: [String] }
+
+main :: [String] -> IO ()
+main args = do
+	let cwd = maybe "" id (System.getProperty "user.dir")
+	let command = parse cwd args	
+	execute command
+
+-- gottlob files
+compile :: CompileCmd -> IO ()
+compile cmd = do
+	let cp = " \"" ++ (joinString File.pathSeparator cmd.classpath) ++ "\" "
+	mkdir $ cmd.directory ++ File.separator ++ "build"
+	println "Compiling..."
+	files <- liftM (filter (\x -> x.contains ".fr")) (listFiles cmd.directory)
+	src <- listFiles (cmd.directory ++ separator ++ "src")
+	-- FIXME: adds each twice in case it compiled them in the wrong order. Not sure how to remedy this.
+	let compCmd = mkCompileCmd cp cmd.directory (files ++ src ++ files ++ src)
+	executeProcess compCmd
+
+listFiles :: String -> IO [String]
+listFiles dir = do
+	f <- File.new $ dir
+	fileList <- f.list
+	case fileList of
+		(Just files) -> (readonly toList files >>= \ls -> return $ map ((dir ++ separator) ++) ls)
+		Nothing      -> return []
+	
+new :: String -> IO ()
+new p = do
+	let withSource = p ++ File.separator ++ "src"
+	println $ "Making new project: " ++ p
+	mkdir p
+	mkdir withSource
+	pr <- PrintWriter.new (withSource ++ File.separator ++ "Main.fr")
+	pr.println mainFile
+	pr.close
+	println "Project created"
+
+run :: RunCmd -> IO ()
+run cmd = do
+	let cp = " \"" ++ (joinString ";" cmd.classpath) ++ "\" "
+	let runCmd = javaCommand ++ " -cp " ++ cp ++  " " ++ (maybe "Main" id cmd.runClass)
+	executeProcess runCmd
+
+execute :: GotCommand -> IO ()
+execute gc = case gc of
+				(Run r)          -> run r
+				(Compile c)      -> compile c
+				New p            -> new p
+				Usage            -> println usage
+				Version          -> println version
+				(Error e)        -> println $ "error: " ++ e
+				(Unrecognised u) -> println $ "Unknown command " ++ u
+
+-- strings
+fregeMain :: String
+fregeMain = "frege.compiler.Main"
+
+javaCommand :: String
+javaCommand = "java -Xmx6072m -Xss10M -XX:MaxJavaStackTraceDepth=-1 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -Xverify:none" 
+
+usage :: String
+usage = "Usage: got [command]"
+
+version :: String
+version = "Gottlob version 0.0.1"
+
+-- utilities and helpers
+joinString :: String -> [String] -> String
+joinString str xs = foldr (\x y -> y ++ str ++ x) "" xs
+
+mkCompileCmd :: String -> String -> [String] -> String
+mkCompileCmd cp dir files = javaCommand ++ " -cp " ++ cp ++  " " ++
+					  fregeMain ++ " -target 1.7 -d " ++
+					  dir ++ File.separator ++ "build " ++ (unwords files)
+
+pure native separator "java.io.File.separator" :: String
+
+executeProcessSilent :: String -> IO ()
+executeProcessSilent s = do
+	p <- Process.exec s
+	p.waitFor
+	return ()
+
+executeProcessErrorOnly :: String -> IO ()
+executeProcessErrorOnly s = do
+	p <- Process.exec s
+	p.waitFor
+	return ()
+
+executeProcess :: String -> IO ()
+executeProcess s = do
+	p <- Process.exec s
+	p.waitFor
+	out <- stdoutReader p
+	err <- stderrReader p
+	mapM_ printReader [out, err]
+
+printReader :: BufferedReader -> IO ()
+printReader rdr = (rdr.getLines >>= mapM_ println) `catch` eof
+
+eof :: EOFException -> IO ()
+eof _ = println "Exception of sorts"
+
+parse :: String -> [String] -> GotCommand
+parse s []         = Error "script received no arguments"
+parse s (dir: [])  = Usage
+parse s (dir:args) = case (head args) of
+			  				"-v"      -> Version
+						  	"-help"   -> Usage
+						  	"run"     -> Run (RunCmd { directory = s, 
+						  		classpath = [dir ++ "lib" ++ File.separator ++ "*",
+						  		s ++ File.separator ++ "lib" ++ File.separator ++ "*",
+						  		s ++ File.separator ++ "build" ], 
+						  		runClass = safeHead (drop 1 args) })
+						  	"compile" -> Compile (CompileCmd { directory = s, 
+						  		classpath = [dir ++ "lib" ++ File.separator ++ "*",
+						  		s ++ File.separator ++ "lib" ++ File.separator ++ "*",
+						  		s ++ File.separator ++ "build"] })
+						  	"new"     -> case (safeHead (drop 1 args)) of 
+						  						(Just p) -> New p
+						  						Nothing  -> Error "project name not specified.\nusage: got new [project_name]"
+						  	_         -> Unrecognised (head args)
+
+safeHead :: [a] -> Maybe a
+safeHead [] = Nothing
+safeHead xs = Just (head xs)
+
+mkdir :: String -> IO ()
+mkdir s = executeProcessSilent $ "mkdir " ++ s
+
+mainFile :: String
+mainFile = "module Main where\nmain = putStrLn \"Hello World.\""
