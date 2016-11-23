@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symlink
+  DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE" # if $SOURCE was a relative symlink, we need to resolve it relative to the path where the symlink file was located
+done
+GOT_HOME="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
+
+BUILD=$GOT_HOME/build
+
+if [ ! -d $BUILD ]; then
+  mkdir -p $BUILD;
+fi
+
+INDICATOR=$BUILD/last.success
+changed=0
+for file in `ls $GOT_HOME/src/*.fr`; do
+	if [ $file -nt $INDICATOR ]; then changed=1; fi
+done
+
+if [ $changed -eq 1 ]; then
+	java -Xmx6072m -Xss10M -XX:MaxJavaStackTraceDepth=-1 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -Xverify:none -cp "$GOT_HOME/lib/*" frege.compiler.Main -target 1.7 -d $BUILD $GOT_HOME/src/Gottlob.fr
+fi
+
+touch $BUILD/last.success
+
+java -Xmx6072m -Xss10M -XX:MaxJavaStackTraceDepth=-1 -XX:+TieredCompilation -XX:TieredStopAtLevel=1 -Xverify:none -cp "$BUILD:$GOT_HOME/lib/*:" Gottlob $GOT_HOME $*

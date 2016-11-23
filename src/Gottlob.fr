@@ -4,7 +4,7 @@ import frege.java.lang.Processes
 
 data GotCommand = Run RunCmd | Compile CompileCmd | New String | Usage | Version | Unrecognised String | Error String
 
-data RunCmd = RunCmd { directory :: String, classpath :: [String], runClass :: Maybe String}
+data RunCmd = RunCmd { directory :: String, classpath :: [String], runClass :: Maybe String }
 
 data CompileCmd = CompileCmd { directory :: String, classpath :: [String] }
 
@@ -17,14 +17,23 @@ main args = do
 -- gottlob files
 compile :: CompileCmd -> IO ()
 compile cmd = do
-	let cp = " \"" ++ (joinString File.pathSeparator cmd.classpath) ++ "\" "
+	classpath <- expandWildCards cmd.classpath
+	let cp = (joinString File.pathSeparator classpath)
 	mkdir $ cmd.directory ++ File.separator ++ "build"
 	println "Compiling..."
 	files <- liftM (filter (\x -> x.contains ".fr")) (listFiles cmd.directory)
 	src <- listFiles (cmd.directory ++ separator ++ "src")
-	-- FIXME: adds each twice in case it compiled them in the wrong order. Not sure how to remedy this.
-	let compCmd = mkCompileCmd cp cmd.directory (files ++ src ++ files ++ src)
+	let compCmd = mkCompileCmd cp cmd.directory (files ++ src)
 	executeProcess compCmd
+	println "Done compiling"
+
+expandWildCards :: [String] -> IO [String]
+expandWildCards s = do
+	let wildcards = filter (\x -> x.contains "*") s
+	let expanded  = filter (\x -> not $ x.contains "*") s
+	let parents = map (\x -> take ((indexOf x "*") - 1) x) wildcards
+	wildcards' <- mapM listFiles parents
+	return $ expanded ++ (concat wildcards')
 
 listFiles :: String -> IO [String]
 listFiles dir = do
@@ -47,7 +56,9 @@ new p = do
 
 run :: RunCmd -> IO ()
 run cmd = do
-	let cp = " \"" ++ (joinString ";" cmd.classpath) ++ "\" "
+	println "Running..."
+	classpath <- expandWildCards cmd.classpath
+	let cp = joinString File.pathSeparator classpath
 	let runCmd = javaCommand ++ " -cp " ++ cp ++  " " ++ (maybe "Main" id cmd.runClass)
 	executeProcess runCmd
 
@@ -118,22 +129,26 @@ parse s (dir:args) = case (head args) of
 			  				"-v"      -> Version
 						  	"-help"   -> Usage
 						  	"run"     -> Run (RunCmd { directory = s, 
-						  		classpath = [dir ++ "lib" ++ File.separator ++ "*",
-						  		s ++ File.separator ++ "lib" ++ File.separator ++ "*",
-						  		s ++ File.separator ++ "build" ], 
-						  		runClass = safeHead (drop 1 args) })
+								classpath = [dir ++ File.separator ++ "lib" ++ File.separator ++ "*",
+								s ++ File.separator ++ "lib" ++ File.separator ++ "*",
+								s ++ File.separator ++ "build" ],
+								runClass = safeHead (drop 1 args) })
 						  	"compile" -> Compile (CompileCmd { directory = s, 
-						  		classpath = [dir ++ "lib" ++ File.separator ++ "*",
-						  		s ++ File.separator ++ "lib" ++ File.separator ++ "*",
-						  		s ++ File.separator ++ "build"] })
-						  	"new"     -> case (safeHead (drop 1 args)) of 
-						  						(Just p) -> New p
-						  						Nothing  -> Error "project name not specified.\nusage: got new [project_name]"
-						  	_         -> Unrecognised (head args)
+								classpath = [dir ++ File.separator ++ "lib" ++ File.separator ++ "*.jar",
+								s ++ File.separator ++ "lib" ++ File.separator ++ "*.jar",
+								s ++ File.separator ++ "build" ] })
+							"new"     -> case (safeHead (drop 1 args)) of
+												(Just p) -> New p
+												Nothing  -> Error "project name not specified.\nusage: got new [project_name]"
+							_         -> Unrecognised (head args)
 
 safeHead :: [a] -> Maybe a
 safeHead [] = Nothing
 safeHead xs = Just (head xs)
+
+-- unambiguous inexOf
+indexOf :: String -> String -> Int
+indexOf s sub = s.indexOf sub 0
 
 mkdir :: String -> IO ()
 mkdir s = executeProcessSilent $ "mkdir " ++ s
